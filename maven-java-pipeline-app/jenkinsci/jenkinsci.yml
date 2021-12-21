@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins
+  namespace: devops
+  labels:
+    name: jenkins
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: jenkins 
+  template:
+    metadata:
+      name: jenkins
+      labels:
+        name: jenkins
+    spec:
+      nodeName: sl-k8s-work-45
+      securityContext:
+        runAsUser: 0
+      serviceAccountName: jenkins
+      containers:
+        - name: jenkins
+          image: jenkinsci/blueocean
+          ports:
+            - containerPort: 8080
+            - containerPort: 50000
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 1Gi
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: "/var/jenkins_home"
+            - name: docker-sock
+              mountPath: "/var/run/docker.sock"
+      volumes:
+      - name: jenkins-home
+        hostPath:
+          path: "/usr/local/src/jenkinsdata"
+      - name: docker-sock
+        hostPath:
+          path: "/var/run/docker.sock"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: devops
+spec:
+  selector:
+    name: jenkins
+  type: NodePort
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+      nodePort: 30008
+    - name: agent
+      port: 50000
+      protocol: TCP
+---
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: devops
+
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: jenkins
+  namespace: devops
+rules:
+- apiGroups: [""]
+  resources: ["pods","events"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get","list","watch"]
+- apiGroups: [""]
+  resources: ["secrets","events"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins
+  namespace: devops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins
+subjects:
+- kind: ServiceAccount
+  name: jenkins

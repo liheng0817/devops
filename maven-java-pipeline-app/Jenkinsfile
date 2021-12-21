@@ -1,0 +1,100 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+    name: jenkins-slave
+spec:
+    containers:
+    - name: jnlp
+      image: harbor.sly.com/library/jenkins-slave-jdk:1.8
+      imagePullPolicy: Always
+      volumeMounts:
+      - name: docker-cmd
+        mountPath: /usr/bin/docker
+      - name: docker-sock
+        mountPath: /var/run/docker.sock
+
+    volumes:
+    - name: docker-cmd
+      hostPath:
+        path: /usr/bin/docker
+    - name: docker-sock
+      hostPath:
+        path: /var/run/docker.sock
+
+'''
+        }
+    }
+    environment {
+        registry = "harbor.sly.com"
+        def project = "gwsl"
+        app_name = "app"
+        image_name = "${registry}/${project}/${app_name}:${BUILD_NUMBER}"
+        git_address = "http://10.2.67.159/devops-group/maven-java-pipeline-app.git"
+    }
+    	 parameters {    
+        gitParameter branch: '', branchFilter: '.*', defaultValue: 'master', description: '选择发布的分支', name: 'Branch', quickFilterEnabled: false, selectedValue: 'NONE', sortMode: 'NONE', tagFilter: '*', type: 'PT_BRANCH'
+        choice (choices: ['1', '3', '5', '7'], description: '副本数', name: 'ReplicaCount')
+        choice (choices: ['devops','prod'], description: '选择部署的环境', name: 'Namespace')
+    }    
+
+
+    stages {
+        stage('拉取代码') {
+            steps {
+                checkout([$class: 'GitSCM', 
+                branches: [[name: "${params.Branch}"]], 
+                extensions: [], 
+                userRemoteConfigs: [[credentialsId: 'gitlab', 
+                url: "${git_address}"]]])
+            }
+        }
+        stage('代码编译') {
+            steps {
+                sh """
+                mvn clean package -Dmaven.skip.test=true
+                ls -l target/
+                pwd
+                """
+            }
+        }    
+        stage('构建镜像并推送至仓库') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'harbor', passwordVariable: 'password', usernameVariable: 'username')]) {
+                sh """
+                docker build -t ${image_name} .
+                docker login -u ${username} -p '${password}' ${registry}
+                docker push ${image_name}
+                """
+                }
+            }
+        }
+        stage('部署至k8s平台') {
+            steps {
+                configFileProvider([configFile(fileId: "kubeconfig", targetLocation: "config")]) {
+                sh """
+                sed -i 's#IMAGE_NAME#${image_name}#' deploy.yaml
+                sed -i 's#REPLICAS#${ReplicaCount}#' deploy.yaml
+                kubectl apply -f deploy.yaml -n ${Namespace} --kubeconfig=config
+                sleep 120
+                kubectl get pods,svc -n ${Namespace} --kubeconfig=config
+                """
+                }
+            }
+        }
+    }
+    post {
+        always {
+            dingtalk (
+                robot: 'jenkins',
+                type: 'TEXT',
+                text: [
+                    "Status of pipeline: ${currentBuild.fullDisplayName}",
+                    "${env.BUILD_URL} has result ${currentBuild.result}."
+                      ])
+               }
+          }
+}
