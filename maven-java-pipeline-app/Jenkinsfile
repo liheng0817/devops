@@ -30,7 +30,7 @@ spec:
     }
     environment {
         registry = "harbor.sly.com"
-        def project = "gwsl"
+        project = "gwsl"
         app_name = "app"
         image_name = "${registry}/${project}/${app_name}:${BUILD_NUMBER}"
         git_address = "http://10.2.67.159/devops-group/maven-java-pipeline-app.git"
